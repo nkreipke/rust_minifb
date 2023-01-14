@@ -34,11 +34,11 @@ use winapi::um::winuser::{
 };
 
 // Wrap this so we can have a proper numbef of bmiColors to write in
-#[repr(C)]
+/*#[repr(C)]
 struct BitmapInfo {
     pub bmi_header: wingdi::BITMAPINFOHEADER,
     pub bmi_colors: [wingdi::RGBQUAD; 3],
-}
+}*/
 
 fn update_key_state(window: &mut Window, wparam: u32, state: bool) {
     match wparam & 0x1ff {
@@ -295,19 +295,26 @@ unsafe extern "system" fn wnd_proc(
                 return winuser::DefWindowProcW(window, msg, wparam, lparam);
             }
 
-            let mut bitmap_info: BitmapInfo = mem::zeroed();
+            if wnd.mem_dc.is_none() {
+                wnd.init_mem_bitmap().expect("could not initialize bitmap");
+            }
 
-            bitmap_info.bmi_header.biSize = mem::size_of::<wingdi::BITMAPINFOHEADER>() as u32;
-            bitmap_info.bmi_header.biPlanes = 1;
-            bitmap_info.bmi_header.biBitCount = 32;
-            bitmap_info.bmi_header.biCompression = wingdi::BI_BITFIELDS;
-            bitmap_info.bmi_header.biWidth = wnd.draw_params.buffer_width as i32;
-            bitmap_info.bmi_header.biHeight = -(wnd.draw_params.buffer_height as i32);
-            bitmap_info.bmi_colors[0].rgbRed = 0xff;
+            let cdc = wnd.mem_dc.unwrap();
+            let hbitmap = wnd.mem_bitmap.unwrap();
+            let pv_bits = wnd.mem_ptr.unwrap();
+
+            wingdi::SelectObject(cdc, hbitmap as *mut winapi::ctypes::c_void);
+
+            ptr::copy_nonoverlapping(
+                wnd.draw_params.buffer,
+                pv_bits as *mut u32,
+                (wnd.draw_params.buffer_width * wnd.draw_params.buffer_height) as usize);
+
+            /*bitmap_info.bmi_colors[0].rgbRed = 0xff;
             bitmap_info.bmi_colors[1].rgbGreen = 0xff;
-            bitmap_info.bmi_colors[2].rgbBlue = 0xff;
+            bitmap_info.bmi_colors[2].rgbBlue = 0xff;*/
 
-            let buffer_width = wnd.draw_params.buffer_width as i32;
+            /*let buffer_width = wnd.draw_params.buffer_width as i32;
             let buffer_height = wnd.draw_params.buffer_height as i32;
             let window_width = wnd.width as i32;
             let window_height = wnd.height as i32;
@@ -315,10 +322,9 @@ unsafe extern "system" fn wnd_proc(
             let mut new_height = window_height;
             let mut new_width = window_width;
             let mut x_offset = 0;
-            let mut y_offset = 0;
+            let mut y_offset = 0;*/
 
-            let dc = wnd.dc.unwrap();
-            wingdi::SelectObject(dc, wnd.clear_brush as *mut winapi::ctypes::c_void);
+            /*wingdi::SelectObject(dc, wnd.clear_brush as *mut winapi::ctypes::c_void);
 
             match wnd.draw_params.scale_mode {
                 ScaleMode::AspectRatioStretch => {
@@ -425,11 +431,36 @@ unsafe extern "system" fn wnd_proc(
                 mem::transmute(&bitmap_info),
                 wingdi::DIB_RGB_COLORS,
                 wingdi::SRCCOPY,
-            );
+            );*/
+
+            let mut size = winapi::shared::windef::SIZE {
+                cx: wnd.draw_params.buffer_width as i32,
+                cy: wnd.draw_params.buffer_height as i32
+            };
+            let mut point = winapi::shared::windef::POINT {
+                x: 0,
+                y: 0
+            };
+            let mut blendfunction = wingdi::BLENDFUNCTION {
+                BlendOp: wingdi::AC_SRC_OVER,
+                BlendFlags: 0,
+                SourceConstantAlpha: 0xFF,
+                AlphaFormat: wingdi::AC_SRC_ALPHA,
+            };
+
+            if winuser::UpdateLayeredWindow(window, ptr::null_mut(), ptr::null_mut(), &mut size as *mut _, cdc, &mut point as *mut _, 0xFFFFFFFF, &mut blendfunction as *mut _, winuser::ULW_ALPHA) == 0 {
+                let e = winapi::um::errhandlingapi::GetLastError();
+
+                panic!("{:?}", e);
+            }
 
             winuser::ValidateRect(window, ptr::null_mut());
 
             return 0;
+        }
+
+        winuser::WM_NCHITTEST => {
+            return winuser::HTCAPTION;
         }
 
         _ => (),
@@ -458,6 +489,7 @@ struct DrawParameters {
     buffer: *const u32,
     buffer_width: u32,
     buffer_height: u32,
+    #[allow(dead_code)]
     scale_mode: ScaleMode,
 }
 
@@ -476,6 +508,9 @@ pub struct Window {
     mouse: MouseData,
     dc: Option<windef::HDC>,
     window: Option<windef::HWND>,
+    mem_dc: Option<windef::HDC>,
+    mem_bitmap: Option<windef::HBITMAP>,
+    mem_ptr: Option<*mut winapi::ctypes::c_void>,
     clear_brush: windef::HBRUSH,
     is_open: bool,
     scale_factor: i32,
@@ -538,6 +573,7 @@ impl Window {
             let window_name = to_wstring(name);
 
             let mut flags = 0;
+            let mut flags_ex = 0;
 
             if opts.title {
                 flags |= winuser::WS_OVERLAPPEDWINDOW as u32;
@@ -554,10 +590,8 @@ impl Window {
                 flags &= !winuser::WS_THICKFRAME;
             }
 
-            //TODO: UpdateLayeredWindow, etc.
-            //https://gist.github.com/texus/31676aba4ca774b1298e1e15133b8141
             if opts.transparency {
-                flags &= winuser::WS_EX_LAYERED;
+                flags_ex |= winuser::WS_EX_LAYERED;
             }
 
             if opts.none {
@@ -580,7 +614,7 @@ impl Window {
             rect.bottom -= rect.top;
 
             let handle = winuser::CreateWindowExW(
-                0,
+                flags_ex,
                 class_name.as_ptr(),
                 window_name.as_ptr(),
                 flags,
@@ -607,6 +641,43 @@ impl Window {
         }
     }
 
+
+    unsafe fn init_mem_bitmap(&mut self) -> Result<()> {
+        let mem_dc = wingdi::CreateCompatibleDC(self.dc.unwrap());
+        if mem_dc.is_null() {
+            return Err(Error::WindowCreate(format!("CreateCompatibleDC failed: {}", errhandlingapi::GetLastError() as u32)));
+        }
+
+        let mut bitmap_info: wingdi::BITMAPINFO = mem::zeroed();
+
+        bitmap_info.bmiHeader.biSize = mem::size_of::<wingdi::BITMAPINFOHEADER>() as u32;
+        bitmap_info.bmiHeader.biPlanes = 1;
+        bitmap_info.bmiHeader.biBitCount = 32;
+        bitmap_info.bmiHeader.biCompression = wingdi::BI_RGB;
+        bitmap_info.bmiHeader.biWidth = self.draw_params.buffer_width as i32;
+        bitmap_info.bmiHeader.biHeight = -(self.draw_params.buffer_height as i32);
+        bitmap_info.bmiHeader.biSizeImage = self.draw_params.buffer_width * self.draw_params.buffer_height * 4;
+
+        let mut pv_bits: *mut winapi::ctypes::c_void = ptr::null_mut();
+
+        let hbitmap = wingdi::CreateDIBSection(
+            mem_dc,
+            &bitmap_info as *const _,
+            wingdi::DIB_RGB_COLORS,
+            &mut pv_bits as *mut *mut winapi::ctypes::c_void,
+            ptr::null_mut(),
+            0);
+        if hbitmap.is_null() {
+            return Err(Error::WindowCreate(format!("CreateDIBSection failed: {}", errhandlingapi::GetLastError() as u32)));
+        }
+
+        self.mem_bitmap = Some(hbitmap);
+        self.mem_dc = Some(mem_dc);
+        self.mem_ptr = Some(pv_bits);
+
+        Ok(())
+    }
+
     pub fn new(name: &str, width: usize, height: usize, opts: WindowOptions) -> Result<Window> {
         unsafe {
             let scale_factor = Self::get_scale_factor(width, height, opts.scale);
@@ -621,6 +692,9 @@ impl Window {
                 mouse: MouseData::default(),
                 dc: Some(winuser::GetDC(handle.unwrap())),
                 window: Some(handle.unwrap()),
+                mem_dc: None,
+                mem_bitmap: None,
+                mem_ptr: None,
                 key_handler: KeyHandler::new(),
                 update_rate: UpdateRate::new(),
                 is_open: true,

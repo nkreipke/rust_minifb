@@ -9,7 +9,7 @@ fn main() {
         320,
         480,
         WindowOptions {
-            resize: true,
+            resize: true,none:true,
             scale_mode: ScaleMode::Center,
             borderless: true,
             transparency: true,
