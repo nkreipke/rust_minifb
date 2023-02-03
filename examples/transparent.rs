@@ -2,7 +2,7 @@ use minifb::{Key, ScaleMode, Window, WindowOptions};
 
 fn main() {
     // Allocate the output buffer.
-    let buf = vec![0x00AAFF33; 320 * 480];
+    let buf = vec![0x70AAFF33; 320 * 480];
 
     let mut window = Window::new(
         "Press ESC to exit",
