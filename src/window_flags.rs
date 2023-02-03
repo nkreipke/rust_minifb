@@ -4,6 +4,8 @@ const WINDOW_BORDERLESS: u32 = 1 << 1;
 const WINDOW_RESIZE: u32 = 1 << 2;
 #[allow(dead_code)]
 const WINDOW_TITLE: u32 = 1 << 3;
+#[allow(dead_code)]
+const WINDOW_TRANSPARENCY: u32 = 1 << 4;
 
 use crate::WindowOptions;
 
@@ -24,6 +26,10 @@ pub fn get_flags(opts: WindowOptions) -> u32 {
 
     if opts.resize {
         flags |= WINDOW_RESIZE;
+    }
+
+    if opts.transparency {
+        flags |= WINDOW_TRANSPARENCY;
     }
 
     flags

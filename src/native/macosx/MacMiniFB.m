@@ -60,6 +60,7 @@ static bool s_init = false;
 const uint32_t WINDOW_BORDERLESS = 1 << 1;
 const uint32_t WINDOW_RESIZE = 1 << 2;
 const uint32_t WINDOW_TITLE = 1 << 3;
+const uint32_t WINDOW_TRANSPARENCY = 1 << 4;
 
 static void create_standard_menu();
 
@@ -192,6 +193,14 @@ void* mfb_open(const char* name, int width, int height, uint32_t flags, int scal
 	if (!window)
 		return 0;
 
+    BOOL transparency = !!(flags & WINDOW_TRANSPARENCY);
+
+    if (transparency) {
+        [window setBackgroundColor:[NSColor clearColor]];
+        [window setOpaque:NO];
+        [window setHasShadow:NO];
+    }
+
 	window->draw_parameters = calloc(sizeof(DrawParameters), 1);
 
 	if (!window->draw_parameters)
@@ -251,6 +260,10 @@ void* mfb_open(const char* name, int width, int height, uint32_t flags, int scal
     view.device = g_metal_device;
     view.delegate = viewController;
     view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+
+    if (transparency)
+        view.layer.opaque = NO;
+
     [window.contentView addSubview:view];
 
     OSXWindowFrameView* temp_view = window->frame_view;
